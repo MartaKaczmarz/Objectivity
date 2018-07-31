@@ -1,0 +1,421 @@
+---
+title: "Coffee brewing"
+author: "Marta Kaczmarz-Klepaczka"
+date: "30 lipca 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Recruitment Task
+In this task I will analyze coffee brewing data.
+
+Attached document coffee_data.csv contains data gathered from cupping sessions which contain such parameters as:
+
+* brewing time,
+* brewing temperature,
+* grinding level,
+* TDS,
+* water pH,
+* processing method,
+* region and plantation height,
+* pre-infusion
+* coffee amount.
+
+Each coffee was rated from 1-5. My task is to tell which parameters affects brewing process the most.
+
+##Exploratory Data Analysis
+I would like to gain intuition about the data so I start with EDA. 
+
+
+```{r libraries, warning = FALSE, message=FALSE, echo=FALSE}
+library(dplyr) #data filtering
+library(ggplot2) #nice plots
+library(mice) #pattern of missing data
+library(rpart) #decision trees
+library(randomForest) #random forest
+library(corrplot) #correlation matrix
+library(caret)
+library(relaimpo) #relative importnace
+
+
+
+coffee_data<-read.csv("C:/Users/mmkac/Desktop/ObjectivityShortDSTask-master/ObjectivityShortDSTask-master/coffee_data.csv", header = T)
+
+```
+
+
+Let's start with looking into types of variables and theirs basic statistics like mean, minimum, maximum, the upper and the lower quartiles:
+
+```{r coffee_data}
+str(coffee_data)
+summary(coffee_data)
+```
+
+Data set contains two categorical variables: *region* and *processing_method*. For three variables: *coffee_amount*, *preinfusion* and *TDS* missing data occurred. Rest of the variables seems to be a clear numeric data.
+
+If missing data for a certain feature or sample is more than 5% then I probably should leave that feature or sample out. Let's take a deeper look into observations with missing values:
+
+
+```{r missing_data}
+md.pattern(coffee_data, plot = FALSE)
+```
+
+Only 306 samples are complete (61% of total), 70 samples miss only *TDS*, 43 samples miss only *coffe_amount*,  17 samples miss *TDS* and *coffee_amount* and so on. In my opinion there are too many observations with at least one value missing to remove any of them from the data set. I will focus on each variable with missing data later.
+
+To answer the task question I'm going to treat coffee rate as an outcome variable and other variables as predictors. 
+
+In next subsections I'm going to focus on each variable distribution separately and their relationship with the coffee rate.
+
+### Coffee rate
+```{r mark}
+ggplot(coffee_data, aes(mark))+
+  geom_bar()+
+  geom_text(stat='count', aes(label=..count..))
+```
+
+Each from 5 coffee rates is represented by at least 50 observations. The most often occuring rate is 3.
+
+
+### Region
+```{r region1}
+q1<-ggplot(coffee_data, aes(region), position = position_stack(reverse = TRUE))+
+  geom_bar()+
+  geom_text(stat='count', aes(label=..count..), vjust=0)+ 
+  coord_flip()
+
+q2<-ggplot(coffee_data, aes(x=region, y=mark),  position = position_stack(reverse = TRUE)) +
+  geom_boxplot()+
+  coord_flip()+
+  geom_jitter() #overlay all of the points for that group on each boxplot in order 
+                #to get an idea of the sample size of the group. 
+```
+
+```{r region2, echo = FALSE,fig.width=4.5, fig.height=4.5}
+q1
+q2
+```
+
+There is only one observation from Guatemala and it is definitely outlier so in futher analysis I'm going to omit this observation. For other countries median of coffee rate is equal to 3. It looks that region is not going to be the variable that differentiate coffee rate.
+
+```{r region3}
+#removing observations with region Guatemala
+coffee_data_clear<-coffee_data[-which(coffee_data$region == 'Guatemala'),]
+```
+
+
+
+### Processing method
+```{r procesing_method1}
+q3<-ggplot(coffee_data, aes(processing_method), position = position_stack(reverse = TRUE))+
+  geom_bar()+
+  geom_text(stat='count', aes(label=..count..), vjust=0)+ 
+  coord_flip()
+
+q4<-ggplot(coffee_data, aes(x=processing_method, y=mark),  position = position_stack(reverse = TRUE)) +
+  geom_boxplot()+
+  coord_flip()+
+  geom_jitter() 
+```
+
+```{r procesing_method2, echo = FALSE,fig.width=4.5, fig.height=4.5}
+q3
+q4
+```
+
+*Washed* and *Honey* are the most popular processing methods. The lowest median of coffee rate is for *Natural* method of processing. For other proccssing methods median of coffee rate is equal to 3.
+
+### Coffee amount
+```{r coffee_amount1}
+q5<-ggplot(coffee_data, aes(coffee_amount)) +
+  geom_histogram()
+
+q6<-ggplot(coffee_data, aes(x=factor(mark), y=coffee_amount)) +
+  geom_boxplot()
+```
+
+```{r coffee_amount2, echo = FALSE,fig.width=4.5, fig.height=4.5, warning=FALSE}
+q5
+q6
+```
+
+Distribution of *coffee_amount* could be approximated by normal distibution.
+
+This predictor contains `r sum(is.na(coffee_data$coffee_amount))/length(coffee_data$coffee_amount)*100`% missing observations. For each leavel of coffee rate exists some missing data. There is a lot of approaches how to deal with missing data. Here I decided to calculate mean nad median value of *coffee_amount* and choose one of them.
+
+```{r coffee_amount3}
+mean(na.omit(coffee_data$coffee_amount))
+
+median(na.omit(coffee_data$coffee_amount))
+```
+
+Value of mean and median for *coffee_amount* are very similar so I decided to replace missing values with mean value of cofffe_amount which calculation was based on values from non missing observations.
+
+```{r coffee_amount4}
+coffee_data_clear$coffee_amount[is.na(coffee_data_clear$coffee_amount)]<-mean(na.omit(coffee_data$coffee_amount))
+
+```
+
+Let's look again into coffee amount distributions:
+
+```{r coffee_amount5}
+q51<-ggplot(coffee_data_clear, aes(coffee_amount)) +
+  geom_histogram()
+
+q61<-ggplot(coffee_data_clear, aes(x=factor(mark), y=coffee_amount)) +
+  geom_boxplot()
+```
+
+```{r coffee_amount6, echo = FALSE,fig.width=4.5, fig.height=4.5, warning=FALSE}
+q51
+q61
+```
+
+Now we can see the pick in the histogram and it due to the fact that`r sum(is.na(coffee_data$coffee_amount))/length(coffee_data$coffee_amount)*100`% of observations was replaced with the same value `r mean(na.omit(coffee_data$coffee_amount))`.
+
+Better approach in this case could be replacing missing values with random values from normal distrbution that is approximating *coffee_distirbution* for each coffee mark level separately. I'm leaving this for further analysis.
+
+There is some difference in median values of *coffee_amount* for coffee mark labels.
+
+### Tempareature of brewing
+```{r brewing_temp1}
+q7<-ggplot(coffee_data, aes(brewing_temp)) +
+  geom_histogram()
+
+q8<-ggplot(coffee_data, aes(x=factor(mark), y=brewing_temp)) +
+  geom_boxplot()
+```
+
+```{r brewing_temp2, echo = FALSE,fig.width=4.5, fig.height=4.5, warning=FALSE}
+q7
+q8
+```
+
+Also *brewing_temp* could be approximated by normal distribution. Based on boxplots I can see that values of this feature differentiate coffee rate.
+
+### Pre-infusion
+```{r preinfusion1}
+q9<-ggplot(coffee_data, aes(factor(preinfusion)), position = position_stack(reverse = TRUE))+
+  geom_bar()+
+  geom_text(stat='count', aes(label=..count..), vjust=0)+ 
+  coord_flip()
+
+q10<-ggplot(coffee_data, aes(y=mark, x=factor(preinfusion))) +
+  geom_boxplot()
+```
+
+```{r preinfusion2, echo = FALSE,fig.width=4.5, fig.height=4.5, warning=FALSE}
+q9
+q10
+```
+
+There is missing `r sum(is.na(coffee_data$preinfusion))/length(coffee_data$preinfusion)*100`% of data. As this feature has only two labels 0 and 1 I decided to replace missing values with new level -1 and treat this variable as categorical one.
+
+```{r preinfusion3}
+coffee_data_clear$preinfusion[is.na(coffee_data_clear$preinfusion)]<--1
+```
+
+For each category of pre-infusion median value of coffee rate is equal to 3. So this feature is not going to be a good predictor.
+
+### Grinding level
+There is 9 levels of grinding. So this predictor is rather categorical one than numeric. 
+```{r grinding_level1}
+q11<-ggplot(coffee_data, aes(grinding_level)) +
+  geom_histogram()
+
+q12<-ggplot(coffee_data, aes(x=factor(mark), y=grinding_level)) +
+  geom_boxplot()
+```
+
+```{r grinding_level2, echo = FALSE,fig.width=4.5, fig.height=4.5, warning=FALSE}
+q11
+q12
+```
+ 
+Grinding level differentiate a little bit coffee rate.
+
+### TDS 
+Parameter TDS was tottaly unknown for me so I asked Google what TDS means in coffee brewing context. The answer is:
+*In coffee, TDS reflects the level of extraction of the coffee, as well as how many dissolved solids there are in the water. Contrary to what you might expect, 0 TDS isn’t a good thing for water – it leaves it tasting “flat”.*
+
+```{r TDS1}
+q13<-ggplot(coffee_data, aes(TDS)) +
+  geom_histogram()
+
+q14<-ggplot(coffee_data, aes(x=factor(mark), y=TDS)) +
+  geom_boxplot()
+```
+
+```{r TDS2, echo = FALSE,fig.width=4.5, fig.height=4.5, warning=FALSE}
+q13
+q14
+```
+
+Predcitor *TDS* contains `r sum(is.na(coffee_data$TDS))/length(coffee_data$TDS)*100`% missing observations. Also here I decided to calculate mean and median value of TDS and choose one of them.
+
+```{r TDS3}
+mean(na.omit(coffee_data$TDS))
+
+median(na.omit(coffee_data$TDS))
+```
+
+Value of mean and median for *TDS* are very similar so I decided to replace missing values with mean value of *TDS* calculated basing on values for non missing observation.
+
+```{r TDS4}
+coffee_data_clear$TDS[is.na(coffee_data_clear$TDS)]<-mean(na.omit(coffee_data$TDS))
+```
+
+Distributions for new feature:
+```{r TDS5}
+q13_1<-ggplot(coffee_data_clear, aes(TDS)) +
+  geom_histogram()
+
+q14_1<-ggplot(coffee_data_clear, aes(x=factor(mark), y=TDS)) +
+  geom_boxplot()
+```
+
+```{r TDS6, echo = FALSE,fig.width=4.5, fig.height=4.5, warning=FALSE}
+q13_1
+q14_1
+```
+
+After replacing missing data with mean value of *TDS* this predictor is not going to differentiate coffee rate. Before replacing NA's there existed some diffrences in median values of 'TDS' for each level of coffee rate. Considring this as well as quite a big amount of missing values I decided to not treat this feature as a good predictor in further models.
+
+### PH of water
+```{r water_ph1}
+q15<-ggplot(coffee_data, aes(water_ph)) +
+  geom_histogram()
+
+q16<-ggplot(coffee_data, aes(x=factor(mark), y=water_ph)) +
+  geom_boxplot()
+```
+
+```{r water_ph2, echo = FALSE,fig.width=4.5, fig.height=4.5, warning=FALSE}
+q15
+q16
+```
+
+PH of water could be approximated by normal distribution. Based on boxplots there exist subtle differences in median of *water_ph* for levels of coffee rate.
+
+
+### Heigh of Plantation
+```{r plantation_height1}
+q17<-ggplot(coffee_data, aes(plantation_height)) +
+  geom_histogram()
+
+q18<-ggplot(coffee_data, aes(x=factor(mark), y=plantation_height)) +
+  geom_boxplot()
+```
+
+```{r plantation_height2, echo = FALSE,fig.width=4.5, fig.height=4.5, warning=FALSE}
+q17
+q18
+```
+
+Also height of plantation could be approximated by normal distribution. Based on boxplots there exist subtle diffrences in median of *plantation_height* for levels of coffee rate.
+
+
+### Brewing time
+```{r brewing_time}
+q18<-ggplot(coffee_data, aes(brewing_time)) +
+  geom_histogram()
+
+q19<-ggplot(coffee_data, aes(x=factor(mark), y=brewing_time)) +
+  geom_boxplot()
+```
+
+```{r brewing_time2, echo = FALSE,fig.width=4.5, fig.height=4.5, warning=FALSE}
+q18
+q19
+```
+
+Feature *brewing_time* could be approximated by normal distribution. I see that relationship between the predictor *brewing_time* and the *mark* is rather pronounced, this will likely be one of the major predictor in the forthcoming model.
+
+### Summary of EDA
+Based of EDA I have some intuiton about the data. Parameters that affects coffee rate the most will be temperature of brewing, brewing time, coffe amount and grinding level, but let's see what further analysis come with.
+
+
+
+## Choosing parameters with the biggest impact on coffee rate
+
+My aproach to this topic is to built a classifiacation model where *mark* is outcome variable and other variables are predictors. In fact it is multiclass clasification problem as response variable has 5 categories.
+
+
+I choose for this problem classification tree because this method is quite easy interpreted and do not require a preprocessing of the data.
+
+### Classification Tree
+
+There are various implementations of classification trees in **R**, I used function `rpart()`
+
+
+Results for subset of data where missing data where replaced as described in the EDA:
+```{r tree1}
+set.seed(114)
+
+fit_tree<-rpart(factor(mark)~., coffee_data_clear)
+
+plot(fit_tree)
+text(fit_tree)
+```
+
+A classification tree shows at each internal node the feature property and at each terminal node the cofee rate.
+
+```{r tree2}
+##Calculation of variable importance for classification model
+imp <- varImp(fit_tree)
+imp<-data.frame(feature = row.names(imp), Overall = imp$Overall)
+
+ggplot(data = imp, aes(x = feature,y = Overall))+
+  geom_bar(stat="identity")+
+  coord_flip()
+
+```
+ 
+Barplot represent variable importance, based on mean decrease in accuracy. The biggest impact of coffee brewing process based on single tree model has time of brewing, amount of coffee,grinding level and brewing temperature.
+ 
+### Random Forest
+Random forest is very often use not only as classification method but also as a method of feature selection. Here I think, it is the fastest way of checking variables importance.
+
+In the case of random forest the idea of selecting randomly a set of possible variables at each node is very clever. The performance is much better, but interpretation is usually more difficult. And something that I love when there are a lot of covariance, the variable importance plot.
+```{r randomforest1}
+
+fit<-randomForest(as.factor(mark)~., data=coffee_data_clear)
+varImp(fit) # get variable importance
+varImpPlot(fit,type=2)
+```
+
+Variable importance plot represents the mean decrease in node impurity (and not the mean decrease in accuracy).
+
+
+If we compare the results with the one on the tree, we get something rather similar, but based on forest the feature with the bigest impact is *brewing_temp*.
+ 
+ 
+I recieved the same set of important features even if my decision would be to omit observations with missing values. 
+```{r randomforest2}
+
+fit<-randomForest(as.factor(mark)~., data=na.omit(coffee_data))
+varImp(fit) # get variable importance
+varImpPlot(fit,type=2)
+```
+
+### Summary
+I decided to make my final decision based on Random Forst method, so my answer for this question is that temperature of brewing, time of brewing, amount of coffee and the grinding level are the
+parameters that affects brewing process the most. 
+
+
+## What more I could do?
+
+* *coffee_amount* is one of the feature with missing data but with quite big impact on coffee rate so I would like to spend more time to know why there is a lot of missing values and wondering if and with what value I can replace them i.e. impute missing values using k-Nearest Neighbours `knnImputation(coffee_data)` from *DMwR* package.
+
+* Try other feature selection methods :  
+    + relative importance of variables fed into a lm model can be determined as a relative percentage
+    + the *earth* package implements variable importance based on Generalized cross validation (GCV), number of subset models the variable occurs (nsubsets) and residual sum of squares (RSS).
+    + more methods could be found in my master thesis *'Comparison of efficiency of feature selection methods in multiclass classification'*).
+
+* Makes prettier graphs with nice axis title
+
+
+
+
